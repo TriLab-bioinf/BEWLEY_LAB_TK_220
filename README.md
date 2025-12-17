@@ -1,5 +1,6 @@
 # How to run the RNAseq pipeline 
 ![](workflow.png)
+
 **Figure 1:** Schematic representation of the Snakemake RNAseq pipeline 
 
 ## A. Setup the pipeline for the first time:
