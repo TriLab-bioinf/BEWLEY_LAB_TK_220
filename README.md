@@ -11,7 +11,7 @@ Note: This should be done only once.
 
 ### 2- Download the RNAseq pipeline by running the  following command in your WD:
 ```
-git clone [[https://github.com/TriLab-bioinf/TriLabs_pipelines.git](https://github.com/TriLab-bioinf/BEWLEY_LAB_TK_220.git)] && cd BEWLEY_LAB_TK_220
+git clone https://github.com/TriLab-bioinf/BEWLEY_LAB_TK_220.git && cd BEWLEY_LAB_TK_220
 ```
 
 ### 3- Copy Biowulf Snakemake profile in your RNAseq_pipeline directory
