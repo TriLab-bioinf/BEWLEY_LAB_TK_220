@@ -1,0 +1,444 @@
+---
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    keep_tex: true
+fontsize: 8pt
+geometry: margin=1in
+---
+
+
+```{r setndefinedup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, tidy = TRUE)
+```
+
+# Load libraries
+```{r message=FALSE}
+
+options(java.parameters = "-Xmx8000m")
+
+library(tidyverse)
+library(DESeq2)
+library(cowplot)
+library(ggpubr)
+library(RColorBrewer)
+library(pheatmap)
+library(ggsci)
+library(AnnotationDbi)
+library(scales)
+library(xlsx)
+library(r2excel)
+library(ggplot2)
+library(viridis)
+library(RSkittleBrewer)
+library(genefilter)
+library(corrplot)
+library(reshape2)
+library(ComplexHeatmap)
+library(circlize)
+library(RUVSeq)
+library(edgeR)
+library(sva)
+trop = RSkittleBrewer('tropical')
+```
+
+# Load aux functions
+```{r}
+setwd("/vf/users/wangy80/Bewley/TK220/RNA-Seq")
+source(file = "./01_aux_rnaseq_functions.R")
+```
+
+# Load data
+```{r}
+metadata <- as.data.frame(read_tsv(file = "/data/wangy80/Bewley/TK220/RNA-Seq/sample_info.txt", col_names = TRUE, comment = "#"))
+rownames(metadata) <- metadata$Sample_ID
+
+
+reads <- as.data.frame(read_tsv(file = "/data/wangy80/Bewley/TK220/RNA-Seq/results/4-read_counts/read_counts", col_names = TRUE, comment = "#"))
+rownames(reads) <- reads$Geneid # adding gene ids as row names
+
+
+# Rename sample names
+read_counts <- reads[,7:length(reads)]
+
+colnames(read_counts) <- gsub(".dedup.bam","",
+                              gsub("results/3-noduplicates/","",
+                                   colnames(read_counts)))
+
+
+# Sort tables so metadata and read counts match order
+read_counts <- read_counts[,match(metadata$Sample_ID, colnames(read_counts))]
+all(rownames(metadata) == colnames(read_counts))
+
+
+# Round read counts to the closest interger
+read_counts <- round(read_counts, digits = 0)
+
+# include total read counts in metadata
+metadata$read_counts <- colSums(read_counts)
+
+# Rename column names in read_counts based on metadata
+colnames(read_counts) <- rownames(metadata)
+
+write.table(x = metadata, file = "metadata.txt", sep = "\t") 
+```
+
+# DE analysis with DESeq2
+
+```{r}
+dir.create(path = "./Plots", showWarnings = FALSE)
+
+# Converting variables to factors
+metadata$Condition <- factor(metadata$Condition,levels=c("zero glycerol","0.05% glycerol","0.1% glycerol"))
+metadata$Time <- as.factor(metadata$Time)
+metadata$Replicate <- as.factor(metadata$Replicate)
+metadata$SampleName <- as.factor(metadata$SampleName)
+metadata$Group <- factor(metadata$Group)
+
+
+# Adding read_depth in design to control for read_depth
+dds <- DESeqDataSetFromMatrix(countData = read_counts, 
+                              colData = metadata,  
+                              design = ~ Time + Condition + Time:Condition)
+
+#mcols(dds)<-data.frame(gene_name=reads$gene_name)
+
+
+# Plot total reads per sample using barchar
+p <- ggbarplot(data = metadata, 
+          x = "SampleName", 
+          y = "read_counts",
+          x.text.angle = 90,
+          fill = "Condition", 
+          title = "Total read counts per sample", 
+          ylab = "Read counts",
+          sort.by.groups = TRUE,
+          palette = "jco",
+          sort.val = "asc")
+
+ggsave2("./Plots/barplot_read_counts_per_sample.pdf", plot = p,width=14,height=8)
+
+# Normalize counts
+vsd <- vst(dds, blind=FALSE)
+
+# Keep genes with at least 30 reads total across samples
+keep <- rowSums(as.data.frame(dds@assays@data@listData)) >= 30
+vsd <- vsd[keep,]
+
+# Calculate distances between samples
+sampleDists <- dist(t(assay(vsd)))
+
+# Plot inter-sample distances
+old.par <- par(no.readonly=T)
+
+sampleDistMatrix <- as.matrix(sampleDists)
+rownames(sampleDistMatrix) <- paste(vsd$SampleName)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+p.hm <- pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         color = colorRampPalette(c("red", "white", "blue"))(100))
+
+pdf("./Plots/heat_map.pdf", p.hm,width=12,height=10)
+p.hm
+dev.off()
+
+p.hm
+
+# PCA
+pcaData <- plotPCA(vsd, intgroup=c("Time","Condition"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+y.coords = c(min(pcaData$PC1, pcaData$PC2), max(pcaData$PC1, pcaData$PC2))
+x.coords = y.coords
+p1 <- ggplot(pcaData, aes(PC1, PC2, color=Condition, shape=Time)) +
+  geom_point() + scale_color_lancet() + 
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed(ratio = (max(pcaData$PC1)-min(pcaData$PC1))/(max(pcaData$PC2)-min(pcaData$PC2))) 
+
+ggsave("./Plots/pca.pdf", plot = p1)
+p1
+
+```
+
+Samples clustered by Condition and Time, treatment with 0.05% glycerol and 0.1% glycerol can not be seperated.
+
+
+# Run DE analysis
+```{r}
+## interaction
+dir.create(path = "./DE", showWarnings = FALSE)
+
+dds <- DESeq(dds)
+resultsNames(dds)
+
+#[1] "Intercept"                                 "Time_3.day_vs_1.day"                      
+#[3] "Condition_0.05..glycerol_vs_zero.glycerol" "Condition_0.1..glycerol_vs_zero.glycerol" 
+#[5] "Time3.day.Condition0.05..glycerol"         "Time3.day.Condition0.1..glycerol"  
+
+comparisons <- list(c("Time_3.day_vs_1.day"),c("Condition_0.05..glycerol_vs_zero.glycerol"),c("Condition_0.1..glycerol_vs_zero.glycerol"),c("Time3.day.Condition0.05..glycerol"),c("Time3.day.Condition0.1..glycerol"))
+
+DE_results <- list()
+
+file_name <- "DE/DE_interaction.xlsx"
+  if(file.exists(file_name)){
+    wb <- loadWorkbook(file = file_name)
+  } else {
+    wb <- createWorkbook(type="xlsx")
+  }
+
+for(i in 1:length(comparisons)){
+  id <- comparisons[[i]]
+  res <- results(object = dds, contrast = comparisons[i]) %>% as.data.frame
+  res$gene <- rownames(dds)
+  res.sorted <- res[order(res$padj, decreasing = FALSE),]
+  write_csv(res.sorted, file = paste0("./DE/DE_",comparisons[i],".csv"))
+  DE_results[[id]] <- res.sorted
+  
+  ## add results to Excel
+  sheet_name <- id
+  # Create new excel sheet, remove sheets if it already exits (if the sheet name is too long, the errors might occur)
+  sheets <- getSheets(wb)
+  if(is.element(sheet_name,names(sheets))){
+    removeSheet(wb, sheetName=sheet_name)
+  }
+  sheet <- createSheet(wb, sheetName = sheet_name)
+
+  # Add df to excel sheet
+  xlsx.addTable(wb = wb, sheet = sheet, data = res.sorted, startRow = 1, startCol = 1)
+
+  # Write sorted table to Excel file as different worksheets. Need file name + Worksheet name !!!
+  saveWorkbook(wb, file_name)
+}
+
+
+```
+
+
+```{r}
+## pairwise
+design(dds) <- ~Group
+dds <- DESeq(dds)
+resultsNames(dds)
+
+comparisons <- c("Group_0_glycerol_3d_vs_0_glycerol_1d","Group_0.05_glycerol_3d_vs_0.05_glycerol_1d","Group_0.1_glycerol_3d_vs_0.1_glycerol_1d","Group_0.05_glycerol_1d_vs_0_glycerol_1d","Group_0.05_glycerol_3d_vs_0_glycerol_3d","Group_0.1_glycerol_1d_vs_0_glycerol_1d","Group_0.1_glycerol_3d_vs_0_glycerol_3d")
+
+DE_results <- list()
+
+file_name <- "DE/DE_pairwise.xlsx"
+  if(file.exists(file_name)){
+    wb <- loadWorkbook(file = file_name)
+  } else {
+    wb <- createWorkbook(type="xlsx")
+  }
+
+for(i in 1:length(comparisons)){
+  sample1 <- gsub("Group_","",gsub("_vs.*","",comparisons[i]))
+  sample2 <- gsub("^.*_vs_","",comparisons[i])
+  id <- comparisons[i]
+  res <- results(object = dds, contrast = c("Group", sample1, sample2)) %>% as.data.frame
+  res$gene <- rownames(dds)
+  res.sorted <- res[order(res$padj, decreasing = FALSE),]
+  write_csv(res.sorted, file = paste0("./DE/DE_",sample1,"_vs",sample2,".csv"))
+  DE_results[[id]] <- res.sorted
+  
+  ## add results to Excel
+  sheet_name <- paste0(sample1,"_vs_",sample2)
+  # Create new excel sheet, remove sheets if it already exits (if the sheet name is too long, the errors might occur)
+  sheets <- getSheets(wb)
+  if(is.element(sheet_name,names(sheets))){
+    removeSheet(wb, sheetName=sheet_name)
+  }
+  sheet <- createSheet(wb, sheetName = sheet_name)
+
+  # Add df to excel sheet
+  xlsx.addTable(wb = wb, sheet = sheet, data = res.sorted, startRow = 1, startCol = 1)
+
+  # Write sorted table to Excel file as different worksheets. Need file name + Worksheet name !!!
+  saveWorkbook(wb, file_name)
+}
+```
+
+
+
+
+
+# Build summary table across contrats
+```{r}
+N <- length(names(DE_results))
+# Initialize table
+my_table <- data.frame(rbind("logFC.up" = rep(0, N), 
+                             "logFC.down" = rep(0, N)
+                             )
+                       ) 
+colnames(my_table) <- names(DE_results)
+
+MAplot <- function(data,prefix) {
+  p1 <- ggmaplot(data, main = expression("Group 1" %->% "Group 2"),
+   fdr = 0.05, fc = 2, size = 0.4,
+   palette = c("#B31B21", "#1465AC", "darkgray"),
+   genenames = as.vector(data$gene_name),
+   legend = "top", top = 20,
+   font.label = c("bold", 11), label.rectangle = TRUE,
+   font.legend = "bold",
+   font.main = "bold",
+   ggtheme = ggplot2::theme_minimal())
+  
+  ggsave(paste0("./Plots/",prefix,".pdf"),p1,height=5,width=5)
+}
+
+
+for (i in names(DE_results)){ 
+  my_table["logFC.up",i] <- table(DE_results[[i]]$padj <= 0.05 & DE_results[[i]]$log2FoldChange > 0)[2]
+  my_table["logFC.down",i] <- table(DE_results[[i]]$padj <= 0.05 & DE_results[[i]]$log2FoldChange < 0)[2]
+  MAplot(data=DE_results[[i]],prefix=i)
+}
+
+# Replace NA by 0s
+my_table[is.na(my_table )] <- 0
+write.table(x = my_table, file = "./DE_summary.txt", sep = "\t", col.names = NA)
+
+```
+
+
+
+## heatmap for all comparisons on all significant genes detected in at least one comparisons
+
+```{r message=FALSE}
+
+heatmap_DE <- function(list=list,out=out) {
+  list<-lapply(list, function(x) 
+  cbind(x, gene_ids = rownames(x)))
+
+  filter <- function(df) {
+    df[df$padj<=0.05,]
+  }
+
+  # Apply the filter function to each data frame in the list
+  filtered <- lapply(list, filter)
+
+  # Merge the filtered data frames into a single data frame
+  all_sig_genes <- unique((bind_rows(filtered))$gene_ids)
+
+  # Merge data frames by gene_ids
+  merged_df <- bind_rows(list, .id = "comparisons")
+
+  filtered_df <- merged_df[merged_df$gene_ids %in% all_sig_genes, ]
+
+  filtered_df_wide <- pivot_wider(filtered_df[,c(1,3,8)],  names_from = "comparisons", values_from = "log2FoldChange")
+
+
+  # heatmap
+
+  mat <- as.data.frame(filtered_df_wide[,2:ncol(filtered_df_wide)])
+  rownames(mat) <- filtered_df_wide$gene_ids
+
+  mat[is.na(mat)] <- 0
+
+  p <- Heatmap(mat, 
+        name="log2FoldChange",
+        show_row_names = FALSE,
+        col = colorRamp2(c(-1, 0, 1), c("blue", "white", "red"))
+        #column_names_gp = gpar(fontsize =8),
+        #heatmap_height = unit(12, "cm"), 
+        #heatmap_width = unit(12, "cm")
+        )
+
+  pdf(paste0("./Plots/pheatmap_",out,".pdf"),p,height=12,width=12)
+  plot(p)
+  dev.off()
+}
+
+heatmap_DE(list=DE_results,out="DE")
+
+```
+
+## heatmap for BGCs (Biosynthetic Gene Clusters)
+
+```{r}
+BGCs <- read.delim("/vf/users/wangy80/Bewley/TK220/BGCs.list",header=F)
+
+heatmap_DE <- function(list=list,out=out) {
+  list<-lapply(list, function(x) 
+  cbind(x, gene_ids = rownames(x)))
+
+  # Merge data frames by gene_ids
+  merged_df <- bind_rows(list, .id = "comparisons")
+
+  filtered_df <- merged_df[merged_df$gene_ids %in% BGCs$V1, ]
+
+  filtered_df_wide <- pivot_wider(filtered_df[,c(1,3,8)],  names_from = "comparisons", values_from = "log2FoldChange")
+
+
+  # heatmap
+
+  mat <- as.data.frame(filtered_df_wide[,2:ncol(filtered_df_wide)])
+  rownames(mat) <- filtered_df_wide$gene
+
+  mat[is.na(mat)] <- 0
+
+  p <- Heatmap(mat, 
+        name="log2FoldChange",
+        show_row_names = TRUE,
+        col = colorRamp2(c(-1, 0, 1), c("blue", "white", "red"))
+        #column_names_gp = gpar(fontsize =8),
+        #heatmap_height = unit(12, "cm"), 
+        #heatmap_width = unit(12, "cm")
+        )
+
+  pdf(paste0("./Plots/pheatmap_BGCs_",out,".pdf"),p,height=12,width=12)
+  plot(p)
+  dev.off()
+}
+
+heatmap_DE(list=DE_results,out="DE")
+
+```
+```{r}
+blast.gene.list <- read.delim("/vf/users/wangy80/Bewley/TK220/blast.gene.list",header=F)
+
+heatmap_DE <- function(list=list,out=out) {
+  list<-lapply(list, function(x) 
+  cbind(x, gene_ids = rownames(x)))
+
+  # Merge data frames by gene_ids
+  merged_df <- bind_rows(list, .id = "comparisons")
+
+  filtered_df <- merged_df[merged_df$gene_ids %in% blast.gene.list$V1, ]
+
+  filtered_df_wide <- pivot_wider(filtered_df[,c(1,3,8)],  names_from = "comparisons", values_from = "log2FoldChange")
+
+
+  # heatmap
+
+  mat <- as.data.frame(filtered_df_wide[,2:ncol(filtered_df_wide)])
+  rownames(mat) <- filtered_df_wide$gene
+
+  mat[is.na(mat)] <- 0
+
+  p <- Heatmap(mat, 
+        name="log2FoldChange",
+        show_row_names = TRUE,
+        col = colorRamp2(c(-1, 0, 1), c("blue", "white", "red"))
+        #column_names_gp = gpar(fontsize =8),
+        #heatmap_height = unit(12, "cm"), 
+        #heatmap_width = unit(12, "cm")
+        )
+
+  pdf(paste0("./Plots/pheatmap_blast.gene_",out,".pdf"),p,height=12,width=12)
+  plot(p)
+  dev.off()
+}
+
+heatmap_DE(list=DE_results,out="DE")
+
+
+```
+
+
+
+```{r}
+sessionInfo()
+```
