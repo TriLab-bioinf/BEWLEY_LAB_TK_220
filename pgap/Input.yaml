@@ -1,0 +1,6 @@
+fasta:
+    class: File
+    location: /vf/users/wangy80/Bewley/TK220/Streptomyces.fasta
+submol:
+    class: File
+    location: /vf/users/wangy80/Bewley/TK220/submol.yaml
