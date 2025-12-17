@@ -1,0 +1,69 @@
+## Metadata
+
+# 1. METADATA FILE
+# Path to sample file
+metadata: ./config/samplesheet.csv
+
+# 2. GENOME REFERENCE INFORMATION
+reference:  
+    # Path to annotation file in gtf format
+    gtf: /data/wangy80/Bewley/TK220/pgap_anno/annot.gtf
+    # Path to reference genome in fasta format
+    fasta: /data/wangy80/Bewley/TK220/pgap_anno/Streptomyces.fasta
+
+# 3. STAR DATABASE    
+stardb:
+    # Path to STAR database (e.g "data/stardb" . Set star_db to "None" if a new db has to be generated)
+    path: None
+    # Overhang value for database generation (read length - 1)
+    sjdbOverhang: 150 
+
+# 4. STAR ALIGNMENT
+# Set spliced_alignment to False if not using spliced alignment (for instance for bacterial or lower eukaryote genomes)
+spliced_alignment: False
+
+# 5. READ FILES
+# Path to raw reads directory (fastq files) 
+reads: data/reads
+# Set paired to False if single-end reads are used
+paired: True
+
+# 6. TRIMMING
+# Perform trimming [True, False]
+trimming: True
+# Path to trimming adapters file
+adapters: data/adapters/adapters.fa
+
+# 7. DUPLICATED READS
+# Flag duplicated reads [True, False]
+flag_dup: True
+
+# 8. READ COUNTS
+# feaureCount parameters description
+    # -p = count fragments instead of individual reads (assumes paired-end reads)
+    # -M = include multi-mapping reads 
+    # -O count reads mapping overlapping features
+    # --fraction = multimapped reads will be caused as a fraction instead of 1 (1/x where x = numb alignments reported for same read)
+    # -s = stranded [0 = unstranded ; 1 = forward -stranded ; 2 = reverse-stranded]
+    # --ignoreDup = Ignore reads flagged as duplicated
+    # -t = annotation feature to be counted [gene, exon, CDS, other available features in the gtf file]
+    # -g = gtf field from the comment column in the gtf file to use as ID 
+
+# featureCount parameters recommended for paired-end reads
+feat_counts_param: "-t CDS -g gene_id -O -s 0 -J -R BAM -M --fraction -p"
+
+# featureCount parameters recommended for single-end reads
+# feat_counts_param: "-t CDS -g gene_id -O -s 0 -J -R BAM -M --fraction"
+
+# Count [True] / ignore [False] reads that were flagged as duplicated 
+count_duplicates: True
+
+# 9. BIGWIG FILES
+# Make bigwig files from bam files
+    # bw_bin: --binSize = Size of the bins
+    # bw_normalization: --normalizeUsing = [RPKM,CPM,BPM,RPGC,None]
+    # bw_ignire_dup: --ignoreDuplicates
+bw_bin: 5
+bw_normalization: "BPM"
+bw_ignore_dup: True
+
