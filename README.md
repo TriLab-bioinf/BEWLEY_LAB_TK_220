@@ -55,7 +55,7 @@ sbatch run_snakemake.sh ./workflow/RNAseq_pipeline.smk
 
 ### 5- To fetch the shell commands ran by the snakemake pipeline use the following command
 ```
-print_snakemake_shell_commands.sh -c module,STAR,samtools,bamCoverage,featureCounts,multiqc -p workflow/RNAseq_pipeline.smk
+print_snakemake_shell_commands.sh -c module,fastp,STAR,samtools,bamCoverage,featureCounts,multiqc -p workflow/RNAseq_pipeline.smk
 ```
 The command above will create the file [snakemake_shell_commands.txt](workflow/snakemake_shell_commands.txt) within the `workflow` directory with an unsorted print out of all shell commands executed by the snakemake pipeline. 
 
